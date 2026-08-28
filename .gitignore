@@ -1,0 +1,23 @@
+# Environment & Secrets
+.env
+.env.local
+*.env
+
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*.db
+backend/*.sqlite3
+__pycache__/
+*.pyc
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+node_modules/
+.next/
+
+# Logs & OS
+*.log
+.DS_Store
