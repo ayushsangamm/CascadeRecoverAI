@@ -7,7 +7,6 @@ import asyncio
 import json
 import logging
 import os
-import random
 import uuid
 from datetime import datetime, timezone
 from typing import AsyncGenerator
@@ -17,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
-from database import get_db, broadcast_sse_event, sse_event_queues
+from database import get_db, broadcast_sse_event, sse_event_queues, SessionLocal
 from models import Transaction, AuditLog, TransactionStatus
 from services.gemini_agent import diagnose_transaction
 from services.notifier import send_recovery_email
@@ -88,16 +87,26 @@ BATCH_SCENARIOS = [
 # Core Pipeline
 # ─────────────────────────────────────────────────
 
-async def run_recovery_pipeline(tx: Transaction, db: Session):
+async def run_recovery_pipeline(tx_id: str):
     """
-    Autonomous AI recovery pipeline:
-    1. Diagnose with Gemini
-    2. Route to Smart Retry or Payment Link
-    3. Send notification
-    4. Broadcast SSE events
+    Autonomous AI recovery pipeline — opens its own DB session.
+    Background tasks must never share the request-scoped session.
+
+    1. Load transaction from DB
+    2. Diagnose with Gemini (or instant rule-based fallback)
+    3. Route: SMART_RETRY → 2-second pause → LINK_SENT
+              ALTERNATE_PAYMENT_LINK → LINK_SENT immediately
+              TERMINATE → PERMANENTLY_FAILED
+    4. Broadcast SSE events throughout
     """
+    db = SessionLocal()
     try:
-        # Step 1: AI Diagnosis
+        tx = db.query(Transaction).filter(Transaction.id == tx_id).first()
+        if not tx:
+            logger.error(f"Pipeline: tx {tx_id} not found")
+            return
+
+        # ── Step 1: AI Diagnosis ────────────────────────────────────────────
         diagnosis = await diagnose_transaction(
             error_code=tx.error_code,
             error_description=tx.error_description,
@@ -106,21 +115,51 @@ async def run_recovery_pipeline(tx: Transaction, db: Session):
             attempts_count=tx.attempts_count,
         )
 
-        tx.decline_type = diagnosis.get("decline_type")
-        tx.ai_reasoning = diagnosis.get("root_cause_summary")
-        tx.ai_action = diagnosis.get("recommended_action")
+        # Normalize decline_type (matching frontend expectations: "SOFT_DECLINE" or "HARD_DECLINE")
+        raw_decline = diagnosis.get("decline_type") or ""
+        if raw_decline in ("Soft decline", "SOFT_DECLINE", "Soft"):
+            tx.decline_type = "SOFT_DECLINE"
+        elif raw_decline in ("Hard decline", "HARD_DECLINE", "Hard"):
+            tx.decline_type = "HARD_DECLINE"
+        else:
+            tx.decline_type = raw_decline
+
+        # Normalize reasoning / decision
+        tx.ai_reasoning = diagnosis.get("decision") or diagnosis.get("root_cause_summary")
+
+        # Normalize recommended action (matching frontend/DB expectations: "SMART_RETRY", "ALTERNATE_PAYMENT_LINK", "TERMINATE")
+        raw_action = diagnosis.get("action") or diagnosis.get("recommended_action")
+        if raw_action in ("Smart Retry", "SMART_RETRY"):
+            tx.ai_action = "SMART_RETRY"
+        elif raw_action in ("Alt. Link", "ALTERNATE_PAYMENT_LINK"):
+            tx.ai_action = "ALTERNATE_PAYMENT_LINK"
+        elif raw_action in ("Terminate", "TERMINATE"):
+            tx.ai_action = "TERMINATE"
+        else:
+            tx.ai_action = raw_action
+
+        # Handle customer message fallback
         tx.customer_message = diagnosis.get("customer_message")
+        if not tx.customer_message:
+            if tx.ai_action == "SMART_RETRY":
+                tx.customer_message = "We hit a temporary network hiccup — don't worry, we're retrying automatically! If the issue persists, we'll send you a quick alternate payment link."
+            elif tx.ai_action == "TERMINATE":
+                tx.customer_message = "We were unable to process your payment after multiple attempts. Please contact your bank or try a completely different payment method."
+            else:
+                tx.customer_message = "Your payment couldn't go through (card declined by bank). We've prepared a secure 1-click alternate payment link — it takes under 30 seconds!"
+
         tx.attempts_count += 1
         tx.updated_at = datetime.now(timezone.utc)
 
         log_ai = AuditLog(
             transaction_id=tx.id,
             step_name="AI_DIAGNOSIS",
-            reasoning=diagnosis.get("root_cause_summary"),
-            channel_action=f"Gemini → {diagnosis.get('recommended_action')}",
+            reasoning=tx.ai_reasoning,
+            channel_action=f"Gemini → {tx.ai_action}",
         )
         db.add(log_ai)
         db.commit()
+        db.refresh(tx)
 
         await broadcast_sse_event({
             "type": "AI_DIAGNOSIS",
@@ -135,21 +174,18 @@ async def run_recovery_pipeline(tx: Transaction, db: Session):
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
-        # Step 2: Route by action
-        recommended = diagnosis.get("recommended_action")
+        # ── Step 2: Route by recommended action ─────────────────────────────
+        recommended = tx.ai_action
 
         if recommended == "TERMINATE" or tx.attempts_count > 3:
             tx.status = TransactionStatus.PERMANENTLY_FAILED
-            db.commit()
-            log_term = AuditLog(
+            db.add(AuditLog(
                 transaction_id=tx.id,
                 step_name="TERMINATED",
                 reasoning="Max attempts reached or terminal error",
                 channel_action="No further action",
-            )
-            db.add(log_term)
+            ))
             db.commit()
-
             await broadcast_sse_event({
                 "type": "STATUS_UPDATE",
                 "tx_id": tx.id,
@@ -163,7 +199,6 @@ async def run_recovery_pipeline(tx: Transaction, db: Session):
         elif recommended == "SMART_RETRY":
             tx.status = TransactionStatus.RETRY_SCHEDULED
             db.commit()
-
             await broadcast_sse_event({
                 "type": "RETRY_SCHEDULED",
                 "tx_id": tx.id,
@@ -173,38 +208,40 @@ async def run_recovery_pipeline(tx: Transaction, db: Session):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
-            # Simulated async delay retry (5 seconds)
-            await asyncio.sleep(5)
+            # Simulated 2-second retry delay
+            await asyncio.sleep(2)
 
-            # After retry, escalate to payment link
+            # After retry — escalate to payment link
             tx.status = TransactionStatus.LINK_SENT
             tx.payment_link = f"http://{HOST}:{FRONTEND_PORT}/pay/{tx.id}"
-            db.commit()
-
-            log_retry = AuditLog(
+            db.add(AuditLog(
                 transaction_id=tx.id,
                 step_name="SMART_RETRY_EXECUTED",
                 reasoning="Auto-retry after transient failure — escalating to payment link",
                 channel_action="Email: Payment Link Sent",
-            )
-            db.add(log_retry)
+            ))
             db.commit()
 
-            email_sent = await send_recovery_email(
-                customer_name=tx.customer_name,
-                customer_email=tx.customer_email,
-                amount=tx.amount,
-                tx_id=tx.id,
-                error_code=tx.error_code,
-                customer_message=tx.customer_message or "",
-            )
+            # Snapshot values before async email call
+            snap = {
+                "name": tx.customer_name, "email": tx.customer_email,
+                "amount": tx.amount, "id": tx.id, "err": tx.error_code,
+                "msg": tx.customer_message or "", "link": tx.payment_link,
+            }
+            db.close()
+            db = None  # signal finally block not to close twice
 
+            email_sent = await send_recovery_email(
+                customer_name=snap["name"], customer_email=snap["email"],
+                amount=snap["amount"], tx_id=snap["id"],
+                error_code=snap["err"], customer_message=snap["msg"],
+            )
             await broadcast_sse_event({
                 "type": "LINK_SENT",
-                "tx_id": tx.id,
-                "customer_name": tx.customer_name,
-                "amount": tx.amount,
-                "payment_link": tx.payment_link,
+                "tx_id": snap["id"],
+                "customer_name": snap["name"],
+                "amount": snap["amount"],
+                "payment_link": snap["link"],
                 "email_sent": email_sent,
                 "status": "LINK_SENT",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -213,40 +250,63 @@ async def run_recovery_pipeline(tx: Transaction, db: Session):
         elif recommended == "ALTERNATE_PAYMENT_LINK":
             tx.status = TransactionStatus.LINK_SENT
             tx.payment_link = f"http://{HOST}:{FRONTEND_PORT}/pay/{tx.id}"
-            db.commit()
-
-            log_link = AuditLog(
+            db.add(AuditLog(
                 transaction_id=tx.id,
                 step_name="PAYMENT_LINK_GENERATED",
                 reasoning="Hard decline — alternate payment link generated",
                 channel_action="Email: Alternate Payment Link",
-            )
-            db.add(log_link)
+            ))
             db.commit()
 
-            email_sent = await send_recovery_email(
-                customer_name=tx.customer_name,
-                customer_email=tx.customer_email,
-                amount=tx.amount,
-                tx_id=tx.id,
-                error_code=tx.error_code,
-                customer_message=tx.customer_message or "",
-            )
+            snap = {
+                "name": tx.customer_name, "email": tx.customer_email,
+                "amount": tx.amount, "id": tx.id, "err": tx.error_code,
+                "msg": tx.customer_message or "", "link": tx.payment_link,
+            }
+            db.close()
+            db = None
 
+            email_sent = await send_recovery_email(
+                customer_name=snap["name"], customer_email=snap["email"],
+                amount=snap["amount"], tx_id=snap["id"],
+                error_code=snap["err"], customer_message=snap["msg"],
+            )
             await broadcast_sse_event({
                 "type": "LINK_SENT",
-                "tx_id": tx.id,
-                "customer_name": tx.customer_name,
-                "amount": tx.amount,
-                "payment_link": tx.payment_link,
+                "tx_id": snap["id"],
+                "customer_name": snap["name"],
+                "amount": snap["amount"],
+                "payment_link": snap["link"],
                 "email_sent": email_sent,
                 "status": "LINK_SENT",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
     except Exception as e:
-        logger.error(f"Pipeline error for {tx.id}: {e}")
-        db.rollback()
+        logger.error(f"Pipeline error for {tx_id}: {e}", exc_info=True)
+        if db:
+            try:
+                db.rollback()
+                # Update status to PERMANENTLY_FAILED so it doesn't freeze in analyzing/diagnosing visual states
+                tx = db.query(Transaction).filter(Transaction.id == tx_id).first()
+                if tx:
+                    tx.status = TransactionStatus.PERMANENTLY_FAILED
+                    tx.ai_reasoning = f"Pipeline execution error: {str(e)}"
+                    tx.ai_action = "TERMINATE"
+                    db.commit()
+                    await broadcast_sse_event({
+                        "type": "STATUS_UPDATE",
+                        "tx_id": tx.id,
+                        "status": "PERMANENTLY_FAILED",
+                        "customer_name": tx.customer_name,
+                        "amount": tx.amount,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+            except Exception as inner_e:
+                logger.error(f"Failed to update failed status in rollback: {inner_e}")
+    finally:
+        if db:
+            db.close()
 
 
 # ─────────────────────────────────────────────────
@@ -296,15 +356,15 @@ async def simulate_fail(payload: FailPayload, db: Session = Depends(get_db)):
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
-    # Run pipeline in background
-    asyncio.create_task(run_recovery_pipeline(tx, db))
+    # Run pipeline in background with its own DB session (pass id only)
+    asyncio.create_task(run_recovery_pipeline(tx.id))
 
     return {"status": "pipeline_started", "tx_id": tx.id, "message": f"Recovery pipeline initiated for ₹{payload.amount}"}
 
 
 @router.post("/simulate/batch")
 async def simulate_batch(db: Session = Depends(get_db)):
-    """Inject 10 varied failure scenarios for batch testing."""
+    """Inject 10 varied failure scenarios for batch testing sequentially with throttling."""
     results = []
     for scenario in BATCH_SCENARIOS:
         tx_id = str(uuid.uuid4())[:8].upper()
@@ -345,16 +405,22 @@ async def simulate_batch(db: Session = Depends(get_db)):
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
-        # Stagger pipeline starts
-        asyncio.create_task(_staggered_pipeline(tx, db, delay=BATCH_SCENARIOS.index(scenario) * 0.5))
+        # Run recovery pipeline as a background task
+        asyncio.create_task(run_recovery_pipeline(tx.id))
         results.append({"tx_id": tx.id, "amount": tx.amount, "error": tx.error_code})
+
+        # Throttle sequential dispatch with 1.2s delay between calls
+        await asyncio.sleep(1.2)
 
     return {"status": "batch_started", "count": len(results), "transactions": results}
 
 
-async def _staggered_pipeline(tx: Transaction, db: Session, delay: float):
-    await asyncio.sleep(delay)
-    await run_recovery_pipeline(tx, db)
+
+async def _staggered_pipeline(tx_id: str, delay: float):
+    """Wait `delay` seconds then run the full recovery pipeline (own session)."""
+    if delay > 0:
+        await asyncio.sleep(delay)
+    await run_recovery_pipeline(tx_id)
 
 
 @router.post("/pay/mock-capture/{tx_id}")
@@ -519,3 +585,9 @@ async def reset_system(db: Session = Depends(get_db)):
     })
 
     return {"status": "reset", "message": "System reset successfully"}
+
+
+@router.post("/reset")
+async def reset_system_post(db: Session = Depends(get_db)):
+    """POST alias for reset — clears all transactions and audit logs."""
+    return await reset_system(db)
