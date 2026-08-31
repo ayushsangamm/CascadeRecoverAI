@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0B0F17;
+  --card: #151D2A;
+  --border: #223046;
+  --text-primary: #F1F5F9;
+  --text-secondary: #94A3B8;
+  --text-muted: #475569;
+  --accent-emerald: #10B981;
+  --accent-amber: #F59E0B;
+  --accent-crimson: #EF4444;
+  --accent-sky: #38BDF8;
+  --accent-violet: #8B5CF6;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--text-primary);
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0B0F17;
+}
+::-webkit-scrollbar-thumb {
+  background: #223046;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2d4a6a;
+}
+
+/* Selection */
+::selection {
+  background: rgba(16, 185, 129, 0.2);
+  color: #10B981;
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid #10B981;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Gradient text utility */
+.gradient-text {
+  background: linear-gradient(135deg, #10B981 0%, #38BDF8 50%, #8B5CF6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Glassmorphism */
+.glass {
+  background: rgba(21, 29, 42, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(34, 48, 70, 0.8);
+}
+
+/* Animated background grid */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(34, 48, 70, 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 48, 70, 0.3) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Glow effects */
+.glow-emerald {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.15), 0 0 40px rgba(16, 185, 129, 0.05);
+}
+.glow-amber {
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.15), 0 0 40px rgba(245, 158, 11, 0.05);
+}
+.glow-crimson {
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.15), 0 0 40px rgba(239, 68, 68, 0.05);
+}
+
+/* Pulse animation for live indicators */
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+/* Shimmer for loading */
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, #151D2A 0%, #1E2D42 50%, #151D2A 100%);
+  background-size: 200% auto;
+  animation: shimmer 1.5s ease infinite;
+}
+
+/* Line clamp */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
