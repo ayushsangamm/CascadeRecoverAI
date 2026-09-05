@@ -56,6 +56,7 @@ export default function DashboardPage() {
           const refreshEvents = [
             "FAILURE_INGESTED",
             "AI_DIAGNOSIS",
+            "RETRY_SCHEDULED",
             "LINK_SENT",
             "PAYMENT_CAPTURED",
             "STATUS_UPDATE",

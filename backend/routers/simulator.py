@@ -94,7 +94,7 @@ async def run_recovery_pipeline(tx_id: str):
 
     1. Load transaction from DB
     2. Diagnose with Gemini (or instant rule-based fallback)
-    3. Route: SMART_RETRY → 2-second pause → LINK_SENT
+    3. Route: SMART_RETRY → RETRY_SCHEDULED cooldown
               ALTERNATE_PAYMENT_LINK → LINK_SENT immediately
               TERMINATE → PERMANENTLY_FAILED
     4. Broadcast SSE events throughout
@@ -198,6 +198,13 @@ async def run_recovery_pipeline(tx_id: str):
 
         elif recommended == "SMART_RETRY":
             tx.status = TransactionStatus.RETRY_SCHEDULED
+            tx.payment_link = None
+            db.add(AuditLog(
+                transaction_id=tx.id,
+                step_name="SMART_RETRY_SCHEDULED",
+                reasoning="Transient failure — automatic retry scheduled during cooldown",
+                channel_action="Auto-retry scheduled; no payment link generated",
+            ))
             db.commit()
             await broadcast_sse_event({
                 "type": "RETRY_SCHEDULED",
@@ -205,45 +212,7 @@ async def run_recovery_pipeline(tx_id: str):
                 "customer_name": tx.customer_name,
                 "amount": tx.amount,
                 "status": "RETRY_SCHEDULED",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-
-            # Simulated 2-second retry delay
-            await asyncio.sleep(2)
-
-            # After retry — escalate to payment link
-            tx.status = TransactionStatus.LINK_SENT
-            tx.payment_link = f"http://{HOST}:{FRONTEND_PORT}/pay/{tx.id}"
-            db.add(AuditLog(
-                transaction_id=tx.id,
-                step_name="SMART_RETRY_EXECUTED",
-                reasoning="Auto-retry after transient failure — escalating to payment link",
-                channel_action="Email: Payment Link Sent",
-            ))
-            db.commit()
-
-            # Snapshot values before async email call
-            snap = {
-                "name": tx.customer_name, "email": tx.customer_email,
-                "amount": tx.amount, "id": tx.id, "err": tx.error_code,
-                "msg": tx.customer_message or "", "link": tx.payment_link,
-            }
-            db.close()
-            db = None  # signal finally block not to close twice
-
-            email_sent = await send_recovery_email(
-                customer_name=snap["name"], customer_email=snap["email"],
-                amount=snap["amount"], tx_id=snap["id"],
-                error_code=snap["err"], customer_message=snap["msg"],
-            )
-            await broadcast_sse_event({
-                "type": "LINK_SENT",
-                "tx_id": snap["id"],
-                "customer_name": snap["name"],
-                "amount": snap["amount"],
-                "payment_link": snap["link"],
-                "email_sent": email_sent,
-                "status": "LINK_SENT",
+                "retry_after_seconds": 2,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 

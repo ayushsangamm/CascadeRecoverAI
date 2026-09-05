@@ -1,6 +1,6 @@
 "use client";
 
-import { api, apiRoutes } from "@/lib/api";
+import { api, apiRoutes, type SimulationFailPayload } from "@/lib/api";
 import {
   Zap,
   CreditCard,
@@ -32,12 +32,12 @@ const HARD_FAIL_SCENARIOS = [
   { error_code: "CARD_BLOCKED", error_description: "Card blocked by issuing bank" },
 ];
 
-const DEMO_CUSTOMERS = [
-  { name: "Arjun Sharma", email: "arjun@demo.com", phone: "9876543210" },
-  { name: "Priya Nair", email: "priya@demo.com", phone: "9876543211" },
-  { name: "Rahul Gupta", email: "rahul@demo.com", phone: "9876543212" },
-  { name: "Sneha Reddy", email: "sneha@demo.com", phone: "9876543213" },
-  { name: "Vikram Patel", email: "vikram@demo.com", phone: "9876543214" },
+const DEMO_CUSTOMERS: Pick<SimulationFailPayload, "customer_name" | "customer_email" | "customer_phone">[] = [
+  { customer_name: "Arjun Sharma", customer_email: "arjun@demo.com", customer_phone: "9876543210" },
+  { customer_name: "Priya Nair", customer_email: "priya@demo.com", customer_phone: "9876543211" },
+  { customer_name: "Rahul Gupta", customer_email: "rahul@demo.com", customer_phone: "9876543212" },
+  { customer_name: "Sneha Reddy", customer_email: "sneha@demo.com", customer_phone: "9876543213" },
+  { customer_name: "Vikram Patel", customer_email: "vikram@demo.com", customer_phone: "9876543214" },
 ];
 
 type LoadingState = "soft" | "hard" | "batch" | "reset" | null;
@@ -54,12 +54,13 @@ export default function SimulatorPanel({ onAction, isConnected }: SimulatorPanel
       const customer = DEMO_CUSTOMERS[Math.floor(Math.random() * DEMO_CUSTOMERS.length)];
       const amount = Math.floor(Math.random() * 9000) + 500;
 
-      const { data } = await api.post(apiRoutes.simulateFail, {
+      const payload: SimulationFailPayload = {
         ...scenario,
         ...customer,
         amount,
         currency: "INR",
-      });
+      };
+      const { data } = await api.post(apiRoutes.simulateFail, payload);
       setLastResult(`✅ Soft failure injected — Tx ${data.tx_id} (₹${amount})`);
       onAction?.();
     } catch (e) {
@@ -77,12 +78,13 @@ export default function SimulatorPanel({ onAction, isConnected }: SimulatorPanel
       const customer = DEMO_CUSTOMERS[Math.floor(Math.random() * DEMO_CUSTOMERS.length)];
       const amount = Math.floor(Math.random() * 9000) + 500;
 
-      const { data } = await api.post(apiRoutes.simulateFail, {
+      const payload: SimulationFailPayload = {
         ...scenario,
         ...customer,
         amount,
         currency: "INR",
-      });
+      };
+      const { data } = await api.post(apiRoutes.simulateFail, payload);
       setLastResult(`✅ Hard failure injected — Tx ${data.tx_id} (₹${amount})`);
       onAction?.();
     } catch (e) {

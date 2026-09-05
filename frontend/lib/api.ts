@@ -19,6 +19,16 @@ export const apiRoutes = {
   reset: "/reset",
 };
 
+export interface SimulationFailPayload {
+  amount: number;
+  currency: string;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+  error_code: string;
+  error_description: string;
+}
+
 export type TransactionStatus =
   | "FAILED"
   | "RETRY_SCHEDULED"
@@ -78,6 +88,7 @@ export interface SSEEvent {
   reasoning?: string;
   status?: string;
   payment_link?: string;
+  retry_after_seconds?: number;
   email_sent?: boolean;
   message?: string;
   timestamp?: string;

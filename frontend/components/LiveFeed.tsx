@@ -179,13 +179,18 @@ export default function LiveFeed({ transactions, liveEvents }: LiveFeedProps) {
                       <td className="px-4 py-3 whitespace-nowrap">
                         <div>
                           <span className={`text-xs font-bold ${action.color}`}>{action.label}</span>
-                          {tx.payment_link && (
+                          {tx.ai_action === "ALTERNATE_PAYMENT_LINK" && tx.payment_link && (
                             <Link
                               href={`/pay/${tx.id}`}
                               className="flex items-center gap-1 text-[10px] text-sky-500 hover:text-sky-400 mt-0.5 group-hover:underline"
                             >
                               <ExternalLink className="w-2.5 h-2.5" /> Pay link
                             </Link>
+                          )}
+                          {tx.ai_action === "SMART_RETRY" && (
+                            <span className="flex items-center gap-1 text-[10px] text-amber-500 mt-0.5">
+                              <RefreshCw className="w-2.5 h-2.5 animate-spin" /> Auto-Retrying (Cooldown)
+                            </span>
                           )}
                         </div>
                       </td>
