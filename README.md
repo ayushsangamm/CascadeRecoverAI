@@ -2,7 +2,7 @@
 
 # CascadeRecover AI ⚡
 
-> **Razorpay AI Buildathon 2024 · Track 3: AI Revenue Recovery**
+> **Razorpay AI Buildathon 2026 · Track 3: AI Revenue Recovery**
 
 An autonomous, production-grade AI Revenue Recovery system that detects failed payments, diagnoses root causes with Google Gemini, triggers smart retries or alternate payment links, and delivers real-time GMV recovery through an interactive dashboard.
 
