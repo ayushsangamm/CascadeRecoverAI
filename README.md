@@ -1,3 +1,5 @@
+
+
 # CascadeRecover AI ⚡
 
 > **Razorpay AI Buildathon 2024 · Track 3: AI Revenue Recovery**
@@ -33,6 +35,14 @@ An autonomous, production-grade AI Revenue Recovery system that detects failed p
 | Real-time | Server-Sent Events (SSE) |
 
 ---
+
+## 🎥 Project Demo Video
+
+Watch the full 5-minute product walk-through and architecture breakdown:
+
+[![Watch the Demo Video](https://img.shields.io/badge/▶_Watch_Pitch_Video-Google_Drive-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/1p1pLBKhXfnYxLeGGhKFEEboAUctnamA4/view?usp=sharing)
+
+> **Direct Link:** [CascadeRecoverAI 5-Minute Pitch & Demo](https://drive.google.com/file/d/1p1pLBKhXfnYxLeGGhKFEEboAUctnamA4/view?usp=sharing)
 
 ## 🚀 Quick Start
 
