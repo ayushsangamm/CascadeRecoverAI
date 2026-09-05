@@ -136,4 +136,4 @@ FRONTEND_PORT=3000
 
 ---
 
-*Built with ❤️ for Razorpay AI Buildathon 2024*
+*Built with ❤️ for Razorpay AI Buildathon 2026*
